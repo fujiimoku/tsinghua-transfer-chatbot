@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         清小转 & DeepSeek 自动对话机器人 (流监听版)
+// @name         清小转 & DeepSeek 自动对话机器人 (事件监听版)
 // @namespace    http://tampermonkey.net/
-// @version      1.3-stream
-// @description  自动使用DeepSeek API与清华大学转系咨询智能助手进行连续对话 - 智能流监听版本
+// @version      1.4-event
+// @description  自动使用DeepSeek API与清华大学转系咨询智能助手进行连续对话 - 事件监听版本
 // @author       Your Name
 // @match        https://www.xiaoda.tsinghua.edu.cn/chat/*
 // @grant        GM_xmlhttpRequest
@@ -27,9 +27,7 @@
     // --- 全局状态 ---
     let conversationHistory = []; // 对话历史
     let isRunning = false;
-    let observer = null; // MutationObserver，用于监视发送按钮状态
-    let streamEndCallback = null; // 流结束回调
-    let lastMessageLength = 0; // 用于检测消息是否还在增长
+    let isWaitingForResponse = false; // 是否正在等待回复
 
     // --- 安全的日志系统 ---
     const Logger = {
@@ -71,92 +69,28 @@
         }
     };
 
-    // --- 按钮图标监控系统 ---
-    function monitorButtonIcon(callback) {
-        const sendingIconSrc = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAMAAACdt4HsAAAAHlBMVEVHcEx2Yv94YP90YP92YP94Yv92YP92YP90YP92YP8O/2LeAAAACXRSTlMAgUC/qTDz9+8StIpgAAABk0lEQVR4AcWV0aLCIAxDbbKp/P8P33knjEKBMh7sK+SQtK4+mgURkiGQctRjroBDqWuGUavPoizJTx9r8jFiKB8QUEQG8GnoMQR1gJY+u0YWtyBjE9cVmm9kPqSrp8OidA67bW7fkmGH+gQM7aei+VLUPxxlEWRCnwisg/n0KS/KAO4PFoUFmdQnBbQBvz62gXcNpBDIaEq/b8/qM972loXawP6yFsFrty1I3YHNXiVbbeECqARPGxDsDMYvOzgA3wxmAhcgPWwk8AHi8G4DZBVwNoHZOH4FMI58gKhcBvy+B7cBy78DDeB9AIwzFyBE66FuggdwPcw6Q2OhvK0E1ziy8qy0UABUBsdSzfeQkcFY62+91vPhGRaGpf+MDAuj0mOBws0biBb8IaT8XXwtuAmhsvy14GwD68jRAif01nbwEEA7b+zLaBZo3vMRerfSWRuR7NtXMoL05a0nLsJxpegReMk7FtX3JyI4MACE6gCeJrWL/d+rrMlHCPq+liLyrPxkVD6IqZX1zxD5zI6klEPN6g+I/zdPgIYolgAAAABJRU5ErkJggg==";
-        const readyIconSrc = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAMAAABg3Am1AAAAD1BMVEVHcEzDzeXDz+fDy+fDzec6aW1CAAAABHRSTlMAgb9ARuXkygAAALxJREFUeAHtlFESgzAIRF3g/mdunNqYICTLpzPls32EZUGOf7wmVMxAwyd9hnJPX7QxJfSGiQqObsHIHgOM7H2CxnCiaEGbSYkOFCW49HecqUh1JC1oJkMyjxIeqalBzyMfmerb0PGneGpwtmO7F5h4XY95SoHzYfEpoP8vXEJLgT48OPaB5eLtPCYOxmMktQSiBSkqmreXunmoKZpEkUdVqwm3KJLvougz/xPFJ1wleP4770KBJgrMor4xPnN0CVXOkyYrAAAAAElFTkSuQmCC";
+    // --- 控制台事件监听系统 ---
+    function setupStreamListener() {
+        // 拦截控制台日志来监听stream事件
+        const originalConsoleLog = console.log;
+        console.log = function (...args) {
+            originalConsoleLog.apply(console, args);
 
-        let lastIconSrc = '';
-        let checkCount = 0;
-
-        const checkInterval = setInterval(() => {
-            if (!isRunning) {
-                clearInterval(checkInterval);
-                return;
-            }
-
-            const sendButton = findSendButton();
-            if (!sendButton) {
-                Logger.log("未找到发送按钮，继续等待...");
-                return;
-            }
-
-            const iconImg = sendButton.querySelector('img.icon') || sendButton;
-            if (!iconImg || !iconImg.src) {
-                Logger.log("未找到按钮图标，继续等待...");
-                return;
-            }
-
-            const currentIconSrc = iconImg.src;
-            checkCount++;
-
-            // 记录图标变化
-            if (currentIconSrc !== lastIconSrc) {
-                if (currentIconSrc.includes(sendingIconSrc.substring(50, 100))) {
-                    Logger.log("检测到发送中图标");
-                } else if (currentIconSrc.includes(readyIconSrc.substring(50, 100))) {
-                    Logger.log("检测到准备就绪图标 - 对话可能已结束");
-                } else {
-                    Logger.log(`图标变化: ${currentIconSrc.substring(0, 100)}...`);
-                }
-                lastIconSrc = currentIconSrc;
-            }
-
-            // 检查是否从发送中状态变为准备就绪状态
-            if (currentIconSrc.includes(readyIconSrc.substring(50, 100))) {
-                Logger.log("确认检测到准备就绪图标，对话已结束");
-                clearInterval(checkInterval);
+            // 检查是否有stream onclose事件
+            const message = args.join(' ');
+            if (message.includes('stream onclose') && isWaitingForResponse) {
+                Logger.log("检测到stream onclose事件");
                 setTimeout(() => {
-                    callback();
-                }, 1000); // 等待1秒确保所有内容都已加载
+                    if (isRunning && isWaitingForResponse) {
+                        Logger.log("stream关闭后处理回复...");
+                        isWaitingForResponse = false;
+                        handleNewResponse();
+                    }
+                }, 1000); // 等待1秒确保所有更新完成
             }
+        };
 
-            // 如果检查了30次还没有检测到变化，可能有问题
-            if (checkCount > 30) {
-                Logger.error("按钮图标监控超时，可能页面结构已变化");
-                clearInterval(checkInterval);
-                callback(); // 还是尝试继续
-            }
-        }, 1000); // 每秒检查一次
-    }
-
-    function getCurrentBotMessage() {
-        try {
-            const chatContainer = document.querySelector(CHAT_CONTAINER_SELECTOR);
-            if (!chatContainer) {
-                Logger.log("调试: 未找到聊天容器 div.prose");
-                return null;
-            }
-
-            const messages = chatContainer.querySelectorAll('div.markdown-body');
-            Logger.log(`调试: 在聊天容器中找到 ${messages.length} 个消息`);
-
-            if (messages.length === 0) {
-                // 尝试其他可能的选择器
-                const altMessages = chatContainer.querySelectorAll('div[class*="message"], div[class*="content"], p, div');
-                Logger.log(`调试: 使用备用选择器找到 ${altMessages.length} 个元素`);
-
-                if (altMessages.length > 0) {
-                    return altMessages[altMessages.length - 1];
-                }
-                return null;
-            }
-
-            return messages[messages.length - 1];
-        } catch (error) {
-            Logger.error("获取当前消息时出错:", error);
-            return null;
-        }
+        Logger.log("已设置stream事件监听器");
     }
 
     // --- DeepSeek API 调用函数 ---
@@ -256,8 +190,9 @@
                     Logger.log(`已发送问题: ${text}`);
                     conversationHistory.push({ role: 'user', content: text });
 
-                    // 启动流监听
-                    startStreamMonitoring();
+                    // 设置等待状态
+                    isWaitingForResponse = true;
+                    Logger.log("开始等待AI回复...");
                 } else {
                     Logger.error("发送按钮不可点击");
                     stopAutomation();
@@ -267,15 +202,6 @@
             Logger.error("发送消息时出错:", error);
             stopAutomation();
         }
-    }
-
-    function startStreamMonitoring() {
-        Logger.log("开始监控按钮图标变化...");
-
-        monitorButtonIcon(() => {
-            Logger.log("检测到按钮图标变为准备就绪状态，处理回复...");
-            handleNewResponse();
-        });
     }
 
     function handleNewResponse() {
@@ -399,6 +325,7 @@
                 return;
             }
             isRunning = true;
+            isWaitingForResponse = false;
             Logger.log("自动化流程已启动...");
             typeAndSend(firstQuestion);
         } catch (error) {
@@ -410,6 +337,7 @@
     function stopAutomation() {
         try {
             isRunning = false;
+            isWaitingForResponse = false;
             Logger.log("自动化流程已停止。");
         } catch (error) {
             Logger.error("停止自动化时出错:", error);
@@ -433,21 +361,23 @@
     // --- 安全初始化 ---
     function safeInitialize() {
         try {
-            Logger.info("流监听版用户脚本正在初始化...");
+            Logger.info("事件监听版用户脚本正在初始化...");
 
             if (document.readyState === 'loading') {
                 document.addEventListener('DOMContentLoaded', function () {
                     Logger.info("DOM加载完成，脚本已准备就绪。");
+                    setupStreamListener();
                 });
             } else {
                 Logger.info("脚本已准备就绪。");
+                setupStreamListener();
             }
 
             GM_registerMenuCommand('🚀 开始自动对话', startAutomation);
             GM_registerMenuCommand('🛑 停止自动对话', stopAutomation);
             GM_registerMenuCommand('🔑 配置DeepSeek API Key', setupApiKey);
 
-            Logger.info("流监听版脚本初始化完成。");
+            Logger.info("事件监听版脚本初始化完成。");
         } catch (error) {
             if (typeof console !== 'undefined' && console.error) {
                 console.error('[UserScript] 初始化失败:', error);
