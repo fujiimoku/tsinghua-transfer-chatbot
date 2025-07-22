@@ -291,7 +291,7 @@
                 return;
             }
 
-            Logger.log(`获取到回复: ${lastResponse.substring(0, 50)}...`);
+            Logger.log(`获取到回复: ${lastResponse.substring(0, 200)}...`);
             conversationHistory.push({ role: 'assistant', content: lastResponse });
 
             getNextQuestionFromDeepSeek(conversationHistory).then(nextQuestion => {
@@ -356,56 +356,144 @@
 
     function getLatestBotResponse() {
         try {
-            // 方法1: 直接查找所有聊天消息
+            // 方法1: 查找AI消息 - 寻找包含 class="chat-message ai" 的元素
+            const aiMessages = document.querySelectorAll('div.chat-message.ai');
+            if (aiMessages.length > 0) {
+                const lastAiMessage = aiMessages[aiMessages.length - 1];
+                const markdownBody = lastAiMessage.querySelector('div.markdown-body');
+                if (markdownBody) {
+                    let messageText = markdownBody.innerText.trim();
+                    messageText = cleanMessageText(messageText);
+                    if (messageText && messageText.length >= 10) {
+                        Logger.log(`提取到AI回复内容（前300字符）: ${messageText.substring(0, 300)}...`);
+                        return messageText;
+                    }
+                }
+            }
+
+            // 方法2: 从所有聊天消息中筛选AI回复
             const chatMessages = document.querySelectorAll(CHAT_MESSAGE_SELECTOR);
             if (chatMessages.length > 0) {
-                // 从最后一条消息开始往前找，寻找AI的回复（包含markdown-body的消息）
+                // 从最后一条消息开始往前找AI的回复
                 for (let i = chatMessages.length - 1; i >= 0; i--) {
                     const message = chatMessages[i];
-                    const markdownBody = message.querySelector(BOT_MESSAGE_SELECTOR);
-                    if (markdownBody) {
-                        const messageText = markdownBody.innerText.trim();
-                        if (messageText && messageText.length >= 10) {
-                            Logger.log(`提取到的回复内容（前100字符）: ${messageText.substring(0, 100)}...`);
+                    // 检查是否是AI消息（包含 ai class 或不包含用户标识）
+                    if (message.classList.contains('ai') ||
+                        (!message.classList.contains('user') && message.querySelector(BOT_MESSAGE_SELECTOR))) {
+                        const markdownBody = message.querySelector(BOT_MESSAGE_SELECTOR);
+                        if (markdownBody) {
+                            let messageText = markdownBody.innerText.trim();
+                            messageText = cleanMessageText(messageText);
+                            if (messageText && messageText.length >= 10) {
+                                Logger.log(`提取到回复内容（前300字符）: ${messageText.substring(0, 300)}...`);
+                                return messageText;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 方法3: 备用方案 - 查找所有markdown-body，但排除明显的用户消息
+            const allMarkdownBodies = document.querySelectorAll('div.markdown-body');
+            if (allMarkdownBodies.length > 0) {
+                // 从后往前查找，跳过明显是用户问题的内容
+                for (let i = allMarkdownBodies.length - 1; i >= 0; i--) {
+                    const markdown = allMarkdownBodies[i];
+                    let messageText = markdown.innerText.trim();
+                    messageText = cleanMessageText(messageText);
+
+                    // 跳过明显是用户问题的短文本
+                    if (messageText && messageText.length >= 50) {
+                        // 检查是否包含AI回复的特征（如"同学"、"建议"、"可以"等）
+                        if (messageText.includes('同学') ||
+                            messageText.includes('建议') ||
+                            messageText.includes('可以') ||
+                            messageText.includes('转系') ||
+                            messageText.length > 200) {
+                            Logger.log(`提取到回复内容（前300字符）: ${messageText.substring(0, 300)}...`);
                             return messageText;
                         }
                     }
                 }
             }
 
-            // 方法2: 如果上面失败，尝试查找聊天容器
-            const chatContainer = document.querySelector(CHAT_CONTAINER_SELECTOR);
-            if (chatContainer) {
-                const messages = chatContainer.querySelectorAll(BOT_MESSAGE_SELECTOR);
-                if (messages.length > 0) {
-                    const lastMessage = messages[messages.length - 1];
-                    const messageText = lastMessage.innerText.trim();
-
-                    if (messageText && messageText.length >= 10) {
-                        Logger.log(`提取到的回复内容（前100字符）: ${messageText.substring(0, 100)}...`);
-                        return messageText;
-                    }
-                }
-            }
-
-            // 方法3: 最后的尝试 - 查找所有markdown-body
-            const allMarkdownBodies = document.querySelectorAll('div.markdown-body');
-            if (allMarkdownBodies.length > 0) {
-                const lastMarkdown = allMarkdownBodies[allMarkdownBodies.length - 1];
-                const messageText = lastMarkdown.innerText.trim();
-
-                if (messageText && messageText.length >= 10) {
-                    Logger.log(`提取到的回复内容（前100字符）: ${messageText.substring(0, 100)}...`);
-                    return messageText;
-                }
-            }
-
-            Logger.error("所有方法都无法获取到有效的回复内容");
+            Logger.error("所有方法都无法获取到有效的AI回复内容");
             return null;
         } catch (error) {
             Logger.error("获取最新回复时出错:", error);
             return null;
         }
+    }
+
+    // 清理消息文本，移除标准的信息更新部分
+    function cleanMessageText(text) {
+        if (!text) return text;
+
+        // 检查是否包含信息更新的关键词
+        const updateKeywords = [
+            '同学你的信息已更新',
+            'gpa：',
+            '英语水平：',
+            '技能兴趣：',
+            '科研状况：',
+            '心态：',
+            '目标：',
+            '年级：',
+            '是否降转:'
+        ];
+
+        // 如果包含这些关键词，尝试找到实际内容的开始位置
+        const hasUpdateInfo = updateKeywords.some(keyword => text.includes(keyword));
+
+        if (hasUpdateInfo) {
+            // 寻找信息更新部分的结束位置
+            const patterns = [
+                /（未输入的信息暂定为默认值哦，请随时告诉小转帮你更新）[\s\S]*?(?=同学|你好|如果|关于|转系|建议)/,
+                /是否降转:[^\n]*[\n\r]+/,
+                /目标：[^\n]*[\n\r]+/
+            ];
+
+            let cleanedText = text;
+
+            // 尝试移除信息更新部分
+            for (const pattern of patterns) {
+                const match = cleanedText.match(pattern);
+                if (match) {
+                    cleanedText = cleanedText.substring(match.index + match[0].length);
+                    break;
+                }
+            }
+
+            // 如果没有匹配到模式，尝试找到第一个段落分隔后的内容
+            if (cleanedText === text) {
+                const lines = text.split('\n');
+                let startIndex = -1;
+
+                for (let i = 0; i < lines.length; i++) {
+                    const line = lines[i].trim();
+                    // 找到信息更新部分结束后的第一个有意义的段落
+                    if (line &&
+                        !updateKeywords.some(keyword => line.includes(keyword)) &&
+                        (line.includes('同学你好') ||
+                            line.includes('如果你想') ||
+                            line.includes('建议') ||
+                            line.includes('可以从') ||
+                            line.includes('转系'))) {
+                        startIndex = i;
+                        break;
+                    }
+                }
+
+                if (startIndex >= 0) {
+                    cleanedText = lines.slice(startIndex).join('\n').trim();
+                }
+            }
+
+            Logger.log('已移除信息更新部分，提取核心内容');
+            return cleanedText;
+        }
+
+        return text;
     }
 
     // --- 脚本控制 (开始/停止) ---
