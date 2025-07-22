@@ -22,7 +22,9 @@
     // --- UI 选择器 (根据页面实际情况可能需要微调) ---
     const INPUT_SELECTOR = 'textarea[placeholder="输入问题，即刻解答！"]'; // 输入框
     const SEND_BUTTON_SELECTOR = 'img.icon[data-v-7248c752]'; // 发送按钮的图标
-    const CHAT_CONTAINER_SELECTOR = 'div.prose'; // 对话内容容器，需要找到包含所有聊天记录的父元素
+    const CHAT_CONTAINER_SELECTOR = 'div.chat-list'; // 对话内容容器
+    const CHAT_MESSAGE_SELECTOR = 'div.chat-message'; // 单个聊天消息
+    const BOT_MESSAGE_SELECTOR = 'div.markdown-body'; // AI回复的markdown内容
 
     // --- 图标状态常量 ---
     const ICON_STATES = {
@@ -339,33 +341,52 @@
 
     function getLatestBotResponse() {
         try {
+            // 方法1: 直接查找所有聊天消息
+            const chatMessages = document.querySelectorAll(CHAT_MESSAGE_SELECTOR);
+            if (chatMessages.length > 0) {
+                // 从最后一条消息开始往前找，寻找AI的回复（包含markdown-body的消息）
+                for (let i = chatMessages.length - 1; i >= 0; i--) {
+                    const message = chatMessages[i];
+                    const markdownBody = message.querySelector(BOT_MESSAGE_SELECTOR);
+                    if (markdownBody) {
+                        const messageText = markdownBody.innerText.trim();
+                        if (messageText && messageText.length >= 10) {
+                            Logger.log(`提取到的回复内容（前100字符）: ${messageText.substring(0, 100)}...`);
+                            return messageText;
+                        }
+                    }
+                }
+            }
+
+            // 方法2: 如果上面失败，尝试查找聊天容器
             const chatContainer = document.querySelector(CHAT_CONTAINER_SELECTOR);
-            if (!chatContainer) {
-                Logger.error("找不到聊天容器");
-                return null;
+            if (chatContainer) {
+                const messages = chatContainer.querySelectorAll(BOT_MESSAGE_SELECTOR);
+                if (messages.length > 0) {
+                    const lastMessage = messages[messages.length - 1];
+                    const messageText = lastMessage.innerText.trim();
+
+                    if (messageText && messageText.length >= 10) {
+                        Logger.log(`提取到的回复内容（前100字符）: ${messageText.substring(0, 100)}...`);
+                        return messageText;
+                    }
+                }
             }
 
-            const messages = chatContainer.querySelectorAll('div.markdown-body');
-            if (messages.length === 0) {
-                Logger.error("聊天容器中没有找到消息");
-                return null;
+            // 方法3: 最后的尝试 - 查找所有markdown-body
+            const allMarkdownBodies = document.querySelectorAll('div.markdown-body');
+            if (allMarkdownBodies.length > 0) {
+                const lastMarkdown = allMarkdownBodies[allMarkdownBodies.length - 1];
+                const messageText = lastMarkdown.innerText.trim();
+
+                if (messageText && messageText.length >= 10) {
+                    Logger.log(`提取到的回复内容（前100字符）: ${messageText.substring(0, 100)}...`);
+                    return messageText;
+                }
             }
 
-            const lastMessage = messages[messages.length - 1];
-            let messageText = lastMessage.innerText.trim();
-
-            if (!messageText) {
-                Logger.error("最新消息为空");
-                return null;
-            }
-
-            if (messageText.length < 10) {
-                Logger.error("消息内容太短，可能还在生成中");
-                return null;
-            }
-
-            Logger.log(`提取到的回复内容（前100字符）: ${messageText.substring(0, 100)}...`);
-            return messageText;
+            Logger.error("所有方法都无法获取到有效的回复内容");
+            return null;
         } catch (error) {
             Logger.error("获取最新回复时出错:", error);
             return null;
