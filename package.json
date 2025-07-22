@@ -1,0 +1,18 @@
+{
+    "name": "userscript-debugger",
+    "version": "1.0.0",
+    "description": "JavaScript userscript debugging workspace for fixing console errors",
+    "main": "index.js",
+    "scripts": {
+        "test": "echo \"Error: no test specified\" && exit 1",
+        "dev": "node index.js"
+    },
+    "keywords": [
+        "userscript",
+        "tampermonkey",
+        "javascript",
+        "debugging"
+    ],
+    "author": "Developer",
+    "license": "MIT"
+}

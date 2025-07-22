@@ -1,0 +1,16 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Analyze Userscript",
+			"type": "shell",
+			"command": "echo",
+			"args": [
+				"UserScript debugging workspace ready. Check the fixed-userscript.js for the corrected version."
+			],
+			"group": "build",
+			"isBackground": false,
+			"problemMatcher": []
+		}
+	]
+}
